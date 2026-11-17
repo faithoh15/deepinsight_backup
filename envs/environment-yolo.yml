@@ -1,0 +1,21 @@
+# Environment of the stages yolo / operator / track2d (YOLO detection, operator segmentation, 2D tracking). NVIDIA GPU recommended.
+#   conda env create -f envs/environment-yolo.yml        -> conda environment "yolo_env"
+# torch 2.4.0 + CUDA 11.8 (pip wheel with its own CUDA libraries; needs an NVIDIA driver >= 520). Versions = the environment that
+# produced the published results (there torch came from the pytorch conda channel, same version).
+name: yolo_env
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu118
+      - torch==2.4.0+cu118
+      - torchvision==0.19.0+cu118
+      - ultralytics==8.4.21
+      - lap==0.5.13
+      - numpy==2.4.2
+      - scipy==1.17.1
+      - opencv-python==4.12.0.88
+      - pyyaml==6.0.3

@@ -1,0 +1,17 @@
+# Environment of every stage except yolo / operator / track2d (and of run.py, view.py, tools/).
+#   conda env create -f envs/environment-main.yml        -> conda environment "deepinsight"
+# Versions = the environment that produced the published results.
+name: deepinsight
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - numpy==2.2.6
+      - scipy==1.15.3
+      - opencv-python==4.13.0.92
+      - open3d==0.19.0
+      - pyyaml==6.0.3
+      - pandas==2.3.3

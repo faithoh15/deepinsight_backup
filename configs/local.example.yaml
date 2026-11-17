@@ -1,0 +1,12 @@
+# 이 컴퓨터의 경로 설정 (git에 올라가지 않습니다). 쓰는 법: cp configs/local.example.yaml configs/local.yaml 한 뒤 값을 고칩니다.
+# 적지 않은 항목은 configs/pipeline.yaml의 기본값을 씁니다. ~ 와 $변수를 쓸 수 있고, 상대 경로는 저장소 폴더 기준입니다.
+paths:
+  nas_root: /path/to/recordings     # 녹화 폴더들(예: 2026-10-12-203411/)이 들어 있는 폴더. NAS 마운트 경로도 됩니다.
+                                    #   예) 파일 관리자로 연결한 AFP NAS:
+                                    #   /run/user/1000/gvfs/afp-volume:host=<NAS 이름>,user=<계정>,volume=dataset_ssd/deep_insight_datasets
+  cache_root: /path/to/recordings   # fetch 단계가 녹화를 복사해 둘 곳. nas_root와 같으면 복사하지 않습니다.
+                                    #   NAS처럼 느린 곳이면 로컬 디스크 폴더를 적으세요 (녹화 하나에 약 1~2 GB).
+  results_root: output              # 결과 폴더: <results_root>/<녹화 이름>/
+envs:                               # 'conda:환경이름' 또는 python 실행 파일 경로
+  main: conda:deepinsight
+  yolo: conda:yolo_env

@@ -1,0 +1,224 @@
+# final pipeline settings (2026-11-16). One file for every stage; the stage values are the ones that produced the published results.
+# Do not edit paths / envs / models here: put this computer's values in configs/local.yaml (see README, 설치).
+paths:                      # defaults; this computer's values go in configs/local.yaml (copy configs/local.example.yaml)
+  nas_root: data/raw        # folder holding the recording folders (<date>/calib, lidar, ...); a NAS mount or any local folder
+  cache_root: data/raw      # stage fetch copies each recording here; the same folder as nas_root = nothing is copied
+  results_root: output      # results: <results_root>/<name>/   (relative paths = relative to the repository folder)
+envs:                       # python of each environment: 'conda:NAME' or a path to the python executable
+  main: conda:deepinsight   # every stage except yolo / operator / track2d (odometry must run here)
+  yolo: conda:yolo_env      # YOLO detection, operator flag (segmentation), BoT-SORT 2D tracking
+models:                     # official Ultralytics weights: python tools/download_models.py puts them here (sha256 checked)
+  yolo: models/yolo26l.pt
+  operator_seg: models/yolo26l-seg.pt
+debug_figures: false        # prep stages' figures and videos (trajectory.png, yolo / operator / track2d vis) only when true
+run:
+  detection_workers: 8
+  detection_video: false
+  tracking_video: false
+result:                     # stage result (2026-11-17): speed classes of the 3D tracks + one table per v3 box -> 4_result/
+  speed_class: {slow_max: 2.78, fast_max: 5.56}   # m/s: 저속 < 2.78 (10 km/h) <= 고속 <= 5.56 (20 km/h) < 초고속; no speed = 미정
+prep:
+  odometry: {min_range: 0.7, max_range: 40.0, source_voxel: 0.25, map_scans: 20, map_voxel: 0.1, normal_radius: 0.5, normal_nn: 20,
+             radii: [1.0, 0.5, 0.3], iters_per_radius: 4, huber: 0.1, sigma_r: 0.05, sigma_prior: 0.1, v_max: 3.0}
+  masks: {min_range: 0.25, max_range: 15.0, self_radius: 1.0, self_voxel: 0.05, self_occ: 0.1, self_step: 10, operator_occ: 0.12,
+          operator_range: 0.7, operator_core: 0.35, operator_az_step: 15.0, operator_z_step: 0.2, operator_z: [-1.6, 1.0],
+          n_scans: 20, max_gap_ms: 60.0}
+  unwrap: {width: 4000, quality: 90, max_dt_ms: 100.0, all_frames: false, n_scans: 20, workers: 8}
+  yolo: {tag: coco26l, full: 1280, tile: 1920, conf: 0.15, nms: 0.5, iom: 0.6, edge: 120}
+  operator: {seg_imgsz: 1920, edge: 120, min_h: 0.35, static_mad: 12.0, static_zone: 1500, cover: 0.4, grabcut_scale: 8, grabcut_iters: 3}
+  track2d: {mode: polar, bev_scale: 100.0, bev_side: [1.0, 0.35], dist_range: [0.8, 15.0], high: 0.4, low: 0.15, new: 0.4, buffer: 30,
+            match: 0.9, pl_sigma_az_deg: 3.0, pl_range_frac: 0.25, pl_range_frac_trunc: 0.6, pl_sigma_a: 1.0, pl_v0_sigma: 1.5,
+            pl_gate_chi2: 9.21, pl_v_tan_max: 3.0, pl_tent_max_s: 1.0, pl_lost_max_s: 3.0, pl_lost_tau: 1.5, pl_sigma_max: 2.0,
+            pl_dup_az_deg: 3.0, pl_dist_range: [0.8, 15.0]}
+
+detection:                 # = 3d_detection/configs/common.yaml
+  # Common parameters of the selective-accumulation detector (one set for all recordings; frozen before the test recording).
+  candidates:
+    scans_before: 20          # candidate scans = anchor-20 .. anchor+20 (41 scans, ~ +-1 s)
+    scans_after: 20
+    anchor_max_dt_ms: 60      # anchor = scan whose centre time (start + 25 ms) is nearest to the image time; farther -> LiDAR gap, frame skipped
+  scan_prep:
+    min_range: 0.25           # device mount (same as build_windows)
+    det_max_range: 10.0       # sensor-origin Euclidean distance limit for detection points
+    self_mask: true           # mount voxels (w20_imu_icp/self_mask.npz of the legacy output)
+    operator_mask: true       # learned operator sector mask (w20_imu_icp/operator_mask.npz)
+  ground:
+    plane_radius: 10.0
+    plane_points: 60000
+    ransac_iter: 300
+    ransac_dist: 0.08
+    ransac_zpct: 40.0
+    gravity_max_deg: 20.0     # RANSAC normal vs mean accelerometer over the candidate scans
+    ground_h: 0.1             # keep h > ground_h (feet/legs kept)
+    ceiling_auto: 0.15        # strongest horizontal layer above 1.9 m minus this (min 2.0); none -> ceiling_default
+    ceiling_default: 2.5
+  fov:
+    pitch_max_deg: 60.0       # tile vertical range; depth > 0 in the assigned camera
+  boxes:
+    tracks: track2d_polar     # 2D ids from this legacy folder (tracks.csv)
+    detections: yolo_coco26l  # detections.csv (operator column) for operator exclusion and untracked fallback
+    margin: 0.10              # box enlarged by this fraction (each side) for the inside test
+    max_gap_s: 0.8            # interpolation between two frames of the same id only if their gap <= this
+    single_dt_s: 0.2          # otherwise nearest frame only if |dt| <= this
+    det_fallback_conf: 0.4    # untracked detections used as single boxes (within single_dt_s)
+  extract:
+    tol: 0.3                  # single-scan Euclidean clustering tolerance = max(tol, tol_per_m * range)
+    tol_per_m: 0.05
+    min_cluster_pts: 3
+    person_fp_max: 1.2        # cluster horizontal extent (m) above this = structure
+    person_top_max: 2.3       # cluster top height above ground (m)
+    dist_sigma_ln: 0.35       # score = exp(-0.5 (ln(r_cluster / d_box) / sigma)^2)
+    select_min_score: 0.3
+    select_margin: 0.2        # best must beat the runner-up (and the other person's score) by this
+    absorb_dist: 0.5          # a small candidate piece whose smallest point gap to a bigger one is within this distance
+    absorb_frac: 0.3          #   and fewer than absorb_frac * its points is the same person split by the clustering -> merged (2026-11-11)
+  accumulate:
+    consistency_res: 0.8      # residual (m) to the robust constant-velocity fit of the candidate centres
+    consistency_min: 3        # fit only with at least this many candidates
+    burst_res: 0.8            # burst hypothesis (score*points weighted median of the candidate piece centres of one burst, >= 2 rows):
+                              #   selected pieces farther than this -> rejected_range; an ambiguous row whose only alternative within
+                              #   this distance is one piece is resolved to it (2026-11-11; same value as consistency_res)
+    motion_mode: box          # box (2026-11-16, v3): the whole pass stays the main component (full body); when the travel within the
+                              #   pass >= motion_min_m the box is moved to the image time along the fitted velocity and shortened by the
+                              #   travel (points not moved). window (2026-11-11, v2): box_acc keeps only the scans within motion_window_m
+                              #   of travel around the scan nearest to the image time (loses body parts: one scan = one height band)
+    motion_window_m: 0.3      # window mode only
+    speed_band_min_m: 0.3     # speed = median over scan pairs of the centroid shift inside the height band both scans share
+                              #   (band at least this tall), so the nodding sweep over the body is not read as motion
+    tol: 0.3                  # final clustering of the accumulated points
+    burst_gap_s: 0.12         # scans whose start times are at most this apart form one burst (one pass of the nodding pattern)
+    motion_min_m: 0.3         # yaw from burst motion if the burst centres moved at least this
+    pca_ratio_min: 1.5        # otherwise PCA yaw; axis-length ratio (sqrt of the eigenvalue ratio) below this -> yaw_reliable = 0
+    valid_min_pts: 15
+    valid_min_h: 0.5
+    lower_only_top: 1.2       # top height below this -> lower body only
+    upper_only_bottom: 0.6    # bottom height above this -> upper body only
+    smear_extra: 0.4          # accumulated footprint exceeds burst footprint by more than this -> smeared
+
+tracking:                 # = 3d_detection/configs/track.yaml
+  # 3D person tracking on top of the frozen v3 detector (2026-11-16). Values: docs/2026-11-16-tracking-design.md §2-5, §9.
+  obs:
+    same_key_gap_s: 0.12      # rows of one 2D key whose pass times (t_img + b_dt_s) are this close = one observation (one nodding pass;
+                              #   2026-11-16 ruling: 0.06 left 4 same-pass pairs split, e.g. 고속 t4 frames 62 / 64 at 74 ms -> 0.12 = batch_gap_s)
+    merge_point_share: 0.5    # different keys merged only if shared points >= this fraction of the smaller observation
+    merge_box_overlap: 0.5    #   and the BEV overlap of the pass boxes >= this fraction of the smaller box
+    merge_nn_m: 0.002         # same point = same scan_id and nearest neighbour within this distance (odometry frame)
+    dup_candidate_m: 0.5      # only pairs whose pass boxes overlap or whose centres are within this are duplicate candidates (checked, logged
+                              #   as dup_unmerged if not merged); 0.5 m = the candidate radius of the design data check (§1)
+    sigma_full: 0.25          # horizontal measurement std (m), full body (legacy lidar_sigma_min; data upper bound 0.14)
+    sigma_partial: 0.5        #   lower_only / upper_only / single_scan / invalid (x2; data upper bound 0.34)
+    v0_sigma: 1.0             # initial velocity std (m/s, legacy v0_sigma)
+    v0_max: 6.0               # v3 within-pass speed above this is not used as initial velocity
+  kf:
+    sigma_a: 0.5              # white-noise acceleration (m/s^2, legacy)
+  assoc:
+    batch_gap_s: 0.12         # observations within this of the batch's first observation (one nodding pass, v3 burst_gap_s), no 2D key twice
+                              #   = one global assignment (2026-11-16: no chaining; a chained batch held two passes of one person)
+    gate_confirmed: 9.21      # chi2 2 dof 99 % (horizontal x, y)
+    gate_sigma_max: 1.0       # gating only: predicted position std capped at this (legacy gate_sigma_max); P untouched. 2026-11-16 ruling:
+                              #   an unseen confirmed track (4 s, no opportunity) had a ~13 m gate and took another person (고속 frame 208)
+    gate_loose: 13.82         # chi2 2 dof 99.9 % (lost tracks only; 2026-11-16 ruling: tentative tracks use gate_confirmed — their
+                              #   unknown velocity already makes the prediction wide, and the loose gate let them take other persons' observations)
+    v_max: 6.0                # reject a pair if implied speed - v_sigma_k * sigma_v > v_max (real runners up to 5.8 m/s)
+    v_sigma_k: 2.0
+    sigma_a_manoeuvre: 2.0    # if the regular gate (sigma_a) fails, the pair is gated again with this acceleration noise (stops, turns);
+                              #   2026-11-16 ruling from the data: |a| between passes median 0.37, p90 1.85, p99 4.05 m/s^2 (p99 / 2.15 ~ 1.9)
+    manoeuvre_max_dt_s: 1.5   # ... only within this time after the track's last observation (= life.time_lost_s)
+    link_bonus: 0.01          # cost - bonus if one of the observation's 2D keys is linked to this track (auxiliary only)
+    link_penalty: 0.01        # cost + penalty if the key is linked to another live track. 2026-11-16 ruling (final review I3): with 2.0
+                              #   (and still with 0.5) a 2D id swap at the closest approach of two crossing people overrode the 3D
+                              #   distance; 0.01 makes the order lexicographic: 3D d2 first, the 2D key only breaks (near-)exact ties
+  life:
+    confirm_min_dt_s: 0.5     # second observation at least this much later confirms a tentative track
+    tentative_max_s: 3.0      # tentative without a second observation within this -> deleted
+    miss_to_lost: 2           # consecutive misses (absent_strong or absent_weak) with opportunity -> lost (absent_strong alone: 1)
+    miss_to_delete: 2         # further misses while lost -> deleted
+    max_age_s: 6.0            # no observation for this long -> deleted (any state)
+    time_lost_s: 1.5          # fallback when visibility cannot be judged
+  vis:
+    core_r: 0.2               # person volume radius = min(core_r + sigma_pos, core_r_max) (legacy existence values)
+    core_r_max: 0.6
+    z_lo: 0.1                 # person volume height band above the floor (m)
+    z_hi: 1.7
+    hit_tol: 0.7              # |range - d| <= hit_tol -> hit, beyond -> behind, before -> front
+    min_rays: 3
+    min_rings: 2              # see-through needs behind returns from at least this many rings
+    sigma_strong: 0.6         # see-through counts as strong only if sigma_pos <= this
+    pass_gap_s: 0.12          # scans this close form one pass
+    det_range: 10.0           # v3 detection range (opportunity needs the person within this)
+    far_range: 200.0          # det_max_range of the visibility scan store (see-through beyond 10 m)
+  post:
+    interp_max_gap_s: 2.5     # frames between two observations of a track at most this far apart = interp
+  out:
+    tail_s: 3.0               # trajectory tail in the BEV figures
+
+map:                 # = 3d_detection/configs/map.yaml
+  # Final static map (2026-11-16). User rulings: the map holds only points that v3 could see (camera FOV and <= 10 m at measurement,
+  # a v3 camera frame within half a frame step); every tracked person is removed whatever its speed; removal time = box span +- 0.6 s,
+  # gaps between boxes bridged only up to 2.5 s; results checked by figures only (no GT metrics).
+  domain:
+    frame_half_s: 0.15        # before the first / after the last v3 camera frame (half the 0.3 s frame step)
+    frame_gap_max_s: 1.0      # scans between two frames further apart are dropped (measured steps 0.3-0.7 s, none > 1 s)
+    # range 0.25-10 m, mount / operator masks and camera FOV are exactly the v3 detection rules (configs/common.yaml scan_prep, fov)
+  tube:                       # per-point-time cylinder around the RTS-smoothed track (same smoother as the tracker output)
+    margin_s: 0.6             # before the first / after the last observation of a span
+    sigma_a: 2.0              # smoothing acceleration noise = the tracker's manoeuvre hypothesis (assoc.sigma_a_manoeuvre); the tracker's
+                              # 0.5 m/s^2 lags turning runners by ~1 m (fast recording: 82 % -> 98 % of the v3 box points inside)
+    gap_s: 2.5                # observations further apart start a new span (= interp_max_gap_s of the tracking output)
+    sample_dt_s: 0.05         # smoothed track sampled every 50 ms (one scan), linear in between
+    r_margin: 0.1             # radius = half the horizontal box diagonal of the nearest observation + r_margin + min(sigma_pos, sigma_cap)
+    sigma_cap: 0.3
+    r_max: 1.0
+    z_lo: 0.1                 # height above the local floor: (z_lo, z_lo + box h + top_margin]; floor points stay (= ground_h of v3)
+    top_margin: 0.2
+  protect:                    # static-structure protection: a candidate in a voxel whose non-tube points span more than span_s stays
+    voxel: 0.1
+    span_s: 3.0
+  residual:                   # diagnosis of kept points that look like person residue (nothing is removed by this)
+    transient_s: 1.0          # kept points of a 0.1 m voxel whose kept points span <= 1 s (seen only briefly), heights (vis.h_lo, vis.h_hi]
+                              # and neither that voxel nor a neighbour observed > protect.span_s (structure)
+    near_m: 1.5               # near_track: a tracked person's cylinder centre within 1.5 m at the point's time; else no_track
+  out:
+    voxel: 0.05               # saved maps: one point per voxel (mean position, mean height above floor, count)
+  vis:
+    h_lo: 0.1                 # top views show heights in (h_lo, h_hi]: floor and ceiling cut so the interior is visible
+    h_hi: 2.0
+
+pose:                 # = 3d_detection/configs/pose_refine.yaml
+  # Map-only pose correction (2026-11-16, docs/2026-11-16-pose-refine-design.md). The legacy trajectory drifts (gyro bias taken from a moving
+  # start + translation-only local-map ICP, no loop closure): 0.8-2.3 m / 1.6-9.4 deg after 60-120 s. User ruling: registration uses whole
+  # scans 0.7-40 m (the legacy odometry input); the map keeps only map-domain points, coordinates corrected.
+  submap:
+    window_s: 2.0             # node every 2 s, submap = scans in [t_k - 1, t_k + 1) s (each scan in exactly one submap)
+    min_range: 0.7            # = lidar_odometry.py --min-range (operator)
+    max_range: 40.0           # = lidar_odometry.py --max-range
+    voxel: 0.15
+    normal_radius: 0.5
+    normal_nn: 20
+  icp:                        # 6-DOF point-to-plane ICP with a Tukey kernel, coarse to fine correspondence radius
+    radii: [1.0, 0.5, 0.25, 0.15]
+    iters: 20
+    inlier_d: 0.2             # overlap = fraction of source points with a target point within inlier_d after ICP
+    min_overlap: 0.4
+    max_rmse: 0.06            # point-to-plane rms of those inliers (development runs: 0.022-0.053 m for every edge tried)
+  graph:
+    seq_gaps: [1, 2]          # ICP edges to the next and the second next node (2 s and 4 s)
+    prior_sigma_rot_deg: 0.2  # legacy relative pose between consecutive nodes (locally consistent: 4 s apart 0.1-0.6 deg, 2-5 cm)
+    prior_sigma_t_m: 0.05
+    icp_sigma_p: 0.05         # ICP edge weight = sqrt(mean point-to-plane information x icp_n_eff) / icp_sigma_p
+    icp_n_eff: 100            # at most 100 'independent' correspondences (systematic errors), degenerate directions keep little weight
+    gravity_sigma_deg: 2.0    # mean accelerometer direction of a node (walking accelerations average out over 2 s) = common up vector
+    robust_scale: 3.0         # Cauchy scale of loop edges (whitened units), iteratively reweighted
+    outlier_whitened: 10.0    # loop edges whose whitened residual stays above this are dropped and the graph solved again
+    irls_iters: 6
+  loop:
+    min_gap_s: 8.0
+    max_dist_m: 5.0           # corrected node centres
+    max_per_node: 4
+    max_jump_m: 3.0           # ICP result vs the current relative pose
+    max_jump_deg: 10.0
+    rounds: 2
+  check:                      # held-out consistency (2 s blocks offset by 1 s from the nodes), description only
+    block_s: 2.0
+    offset_s: 1.0
+    max_dist_m: 3.0

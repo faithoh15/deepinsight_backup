@@ -1,0 +1,9 @@
+# results, local recordings, downloaded weights, this computer's settings
+output/
+data/
+models/*.pt
+configs/local.yaml
+__pycache__/
+*.pyc
+*.part
+envs/condaenv.*.requirements.txt
