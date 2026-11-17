@@ -18,7 +18,7 @@ if FINAL not in sys.path:
     sys.path.insert(0, FINAL)
 
 PACKAGES = {"main": ["numpy", "scipy", "cv2", "open3d", "yaml", "pandas"],
-            "yolo": ["numpy", "scipy", "cv2", "yaml", "torch", "torchvision", "ultralytics", "lap"]}
+            "yolo": ["numpy", "scipy", "cv2", "yaml", "pandas", "torch", "torchvision", "ultralytics", "lap"]}
 YOLO_ONLY = ("pipeline.prep.yolo", "pipeline.prep.operator")             # import torch / ultralytics at module level
 RECORDING = ("calib/config/camera.yaml", "calib/config/imu_camera0.yaml", "imu_data.csv", "lidar/", "images_cam0/", "images_cam1/")
 ENV_FILE = {"main": "envs/environment-main.yml", "yolo": "envs/environment-yolo.yml"}
